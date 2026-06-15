@@ -191,11 +191,7 @@ st.write(
 with st.sidebar:
     st.header("Geocoding Settings")
 
-    mapbox_token = st.text_input(
-        "Mapbox access token",
-        type="password",
-        help="Paste your Mapbox access token.",
-    )
+    mapbox_token = st.secrets["MAPBOX_TOKEN"]
 
     country = st.text_input(
         "Country code",
