@@ -191,7 +191,8 @@ st.write(
 with st.sidebar:
     st.header("Geocoding Settings")
 
-    mapbox_token = st.secrets["MAPBOX_TOKEN"]
+    mapbox_token = "pk.eyJ1IjoicnNpZGRpcTIiLCJhIjoiY21jbjcwNWtkMHV5bzJpb2pnM3QxaDFtMyJ9.6T6i_QFuKQatpGaCFUvCKg"
+
 
     country = st.text_input(
         "Country code",
