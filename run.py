@@ -483,72 +483,44 @@ if "geocoded_results" in st.session_state:
         use_container_width=True,
     )
 # app.py
+# ============================================================
+# APPROXIMATE TRACT-TO-AGENCY DRIVE-TIME MATRIX
+# Uses:
+#   1. Geocoded agencies from the previous Streamlit block
+#   2. Fixed ODM FBCENC file for tract coordinates
+# ============================================================
 
-import io
 import math
-
 import pandas as pd
 import streamlit as st
 
 
 # ============================================================
-# PAGE CONFIG
+# CONFIG
 # ============================================================
-st.set_page_config(
-    page_title="Approximate Drive-Time Matrix",
-    page_icon="🚗",
-    layout="wide",
-)
+TRACT_COORDINATE_FILE = "ODM FBCENC 2.csv"
 
-st.title("🚗 Tract-to-Agency Approximate Drive-Time Matrix")
+TRACT_ID_COL = "GEOID"
+TRACT_LAT_COL = "TRACT_LAT_COL"
+TRACT_LNG_COL = "TRACT_LNG_COL"
 
-st.write(
-    "Upload a geocoded agency file and a tract-coordinate file. "
-    "The tool estimates road distance and travel time using "
-    "geodesic distance, a road-distance multiplier, and an "
-    "assumed average driving speed."
-)
+AGENCY_ID_COL = "Agency No."
+AGENCY_NAME_COL = "Site Name"
+AGENCY_LAT_COL = "Latitude"
+AGENCY_LNG_COL = "Longitude"
 
-
-# ============================================================
-# DEFAULT COLUMN NAMES
-# ============================================================
-DEFAULT_TRACT_ID_COL = "GEOID"
-DEFAULT_TRACT_LAT_COL = "YCoord"
-DEFAULT_TRACT_LNG_COL = "XCoord"
-
-DEFAULT_AGENCY_ID_COL = "Agency No."
-DEFAULT_AGENCY_NAME_COL = "Site Name"
-DEFAULT_AGENCY_LAT_COL = "Latitude"
-DEFAULT_AGENCY_LNG_COL = "Longitude"
+ROAD_FACTOR_DEFAULT = 1.25
+AVERAGE_SPEED_DEFAULT = 30.0
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# HELPERS
 # ============================================================
-def read_uploaded_file(uploaded_file):
-    extension = uploaded_file.name.lower().split(".")[-1]
-
-    if extension == "csv":
-        return pd.read_csv(
-            uploaded_file,
-            dtype=str,
-        )
-
-    if extension in {"xlsx", "xls"}:
-        return pd.read_excel(
-            uploaded_file,
-            dtype=str,
-        )
-
-    raise ValueError("Upload a CSV, XLSX, or XLS file.")
-
-
 def clean_geoid(series):
     """
-    Keep GEOID as text and remove Excel-style trailing '.0'.
+    Keep GEOID as an 11-character string.
+    Removes Excel-style trailing .0.
     """
-
     return (
         series
         .astype(str)
@@ -569,10 +541,8 @@ def clean_text(series):
 
 def haversine_miles(lat1, lon1, lat2, lon2):
     """
-    Calculate straight-line distance in miles between two
-    latitude/longitude coordinates.
+    Calculate straight-line distance in miles.
     """
-
     earth_radius_miles = 3958.7613
 
     lat1_rad = math.radians(lat1)
@@ -625,75 +595,41 @@ def miles_to_text(miles):
     return f"{miles:.1f} mi"
 
 
-def dataframe_to_csv_bytes(df):
-    return df.to_csv(
-        index=False,
-    ).encode("utf-8-sig")
-
-
-# ============================================================
-# MATRIX FUNCTION
-# ============================================================
 def compute_approximate_drive_time_matrix(
     tracts_df,
     agencies_df,
-    tract_id_col,
-    tract_lat_col,
-    tract_lng_col,
-    agency_id_col,
-    agency_name_col,
-    agency_lat_col,
-    agency_lng_col,
     road_factor,
     average_speed_mph,
     progress_bar=None,
     status_placeholder=None,
 ):
     """
-    Calculate all tract-agency combinations.
-
-    Travel-time approximation:
-
-        estimated road distance
-            = geodesic distance × road factor
-
-        estimated travel time
-            = estimated road distance ÷ average speed
+    Create one row for every tract-agency pair.
     """
 
-    if road_factor <= 0:
-        raise ValueError(
-            "Road factor must be greater than zero."
-        )
-
-    if average_speed_mph <= 0:
-        raise ValueError(
-            "Average speed must be greater than zero."
-        )
-
     required_tract_columns = [
-        tract_id_col,
-        tract_lat_col,
-        tract_lng_col,
+        TRACT_ID_COL,
+        TRACT_LAT_COL,
+        TRACT_LNG_COL,
     ]
 
     required_agency_columns = [
-        agency_id_col,
-        agency_name_col,
-        agency_lat_col,
-        agency_lng_col,
+        AGENCY_ID_COL,
+        AGENCY_NAME_COL,
+        AGENCY_LAT_COL,
+        AGENCY_LNG_COL,
     ]
 
     missing_tract_columns = [
-        column
-        for column in required_tract_columns
-        if column not in tracts_df.columns
+        col
+        for col in required_tract_columns
+        if col not in tracts_df.columns
     ]
 
     missing_agency_columns = [
-        column
-        for column in required_agency_columns
-        if column not in agencies_df.columns
+        col
+        for col in required_agency_columns
+        if col not in agencies_df.columns
     ]
 
     if missing_tract_columns:
@@ -714,86 +650,96 @@ def compute_approximate_drive_time_matrix(
         required_agency_columns
     ].copy()
 
-    tracts[tract_id_col] = clean_geoid(
-        tracts[tract_id_col]
+    tracts[TRACT_ID_COL] = clean_geoid(
+        tracts[TRACT_ID_COL]
     )
 
-    agencies[agency_id_col] = clean_text(
-        agencies[agency_id_col]
+    agencies[AGENCY_ID_COL] = clean_text(
+        agencies[AGENCY_ID_COL]
     )
 
-    agencies[agency_name_col] = clean_text(
-        agencies[agency_name_col]
+    agencies[AGENCY_NAME_COL] = clean_text(
+        agencies[AGENCY_NAME_COL]
     )
 
-    tracts[tract_lat_col] = pd.to_numeric(
-        tracts[tract_lat_col],
+    tracts[TRACT_LAT_COL] = pd.to_numeric(
+        tracts[TRACT_LAT_COL],
         errors="coerce",
     )
 
-    tracts[tract_lng_col] = pd.to_numeric(
-        tracts[tract_lng_col],
+    tracts[TRACT_LNG_COL] = pd.to_numeric(
+        tracts[TRACT_LNG_COL],
         errors="coerce",
     )
 
-    agencies[agency_lat_col] = pd.to_numeric(
-        agencies[agency_lat_col],
+    agencies[AGENCY_LAT_COL] = pd.to_numeric(
+        agencies[AGENCY_LAT_COL],
         errors="coerce",
     )
 
-    agencies[agency_lng_col] = pd.to_numeric(
-        agencies[agency_lng_col],
+    agencies[AGENCY_LNG_COL] = pd.to_numeric(
+        agencies[AGENCY_LNG_COL],
         errors="coerce",
     )
 
     tracts = tracts.dropna(
         subset=[
-            tract_id_col,
-            tract_lat_col,
-            tract_lng_col,
+            TRACT_ID_COL,
+            TRACT_LAT_COL,
+            TRACT_LNG_COL,
         ]
     )
 
     agencies = agencies.dropna(
         subset=[
-            agency_id_col,
-            agency_name_col,
-            agency_lat_col,
-            agency_lng_col,
+            AGENCY_ID_COL,
+            AGENCY_NAME_COL,
+            AGENCY_LAT_COL,
+            AGENCY_LNG_COL,
         ]
     )
 
     agencies = agencies[
-        agencies[agency_id_col] != ""
+        agencies[AGENCY_ID_COL] != ""
     ]
 
     agencies = agencies[
-        agencies[agency_name_col] != ""
+        agencies[AGENCY_NAME_COL] != ""
     ]
 
-    # One row per agency.
-    agencies = agencies.drop_duplicates(
-        subset=[agency_id_col],
+    # One coordinate record per tract
+    tracts = tracts.drop_duplicates(
+        subset=[TRACT_ID_COL],
         keep="first",
     )
 
-    total_tracts = len(tracts)
-    total_pairs = total_tracts * len(agencies)
+    # One record per agency
+    agencies = agencies.drop_duplicates(
+        subset=[AGENCY_ID_COL],
+        keep="first",
+    )
 
-    if total_pairs == 0:
+    if tracts.empty:
         raise ValueError(
-            "No valid tract-agency pairs were available."
+            "No valid tract coordinate records were found."
+        )
+
+    if agencies.empty:
+        raise ValueError(
+            "No valid geocoded agency records were found."
         )
 
     output_rows = []
+
+    total_tracts = len(tracts)
 
     for tract_position, (_, tract) in enumerate(
         tracts.iterrows(),
         start=1,
     ):
-        tract_id = tract[tract_id_col]
-        tract_lat = float(tract[tract_lat_col])
-        tract_lng = float(tract[tract_lng_col])
+        tract_id = tract[TRACT_ID_COL]
+        tract_lat = float(tract[TRACT_LAT_COL])
+        tract_lng = float(tract[TRACT_LNG_COL])
 
         if status_placeholder is not None:
             status_placeholder.write(
@@ -802,10 +748,16 @@ def compute_approximate_drive_time_matrix(
             )
 
         for _, agency in agencies.iterrows():
-            agency_id = agency[agency_id_col]
-            agency_name = agency[agency_name_col]
-            agency_lat = float(agency[agency_lat_col])
-            agency_lng = float(agency[agency_lng_col])
+            agency_id = agency[AGENCY_ID_COL]
+            agency_name = agency[AGENCY_NAME_COL]
+
+            agency_lat = float(
+                agency[AGENCY_LAT_COL]
+            )
+
+            agency_lng = float(
+                agency[AGENCY_LNG_COL]
+            )
 
             geodesic_miles = haversine_miles(
                 tract_lat,
@@ -839,7 +791,7 @@ def compute_approximate_drive_time_matrix(
                 {
                     "GEOID": tract_id,
                     "Agency No.": agency_id,
-                    "Name": agency_name,
+                    "Agency Name": agency_name,
                     "drive_time_seconds": (
                         drive_time_seconds
                     ),
@@ -855,11 +807,15 @@ def compute_approximate_drive_time_matrix(
                     "geodesic_distance_miles": (
                         geodesic_miles
                     ),
-                    "distance_text": miles_to_text(
-                        estimated_road_miles
+                    "drive_time_text": (
+                        seconds_to_text(
+                            drive_time_seconds
+                        )
                     ),
-                    "drive_time_text": seconds_to_text(
-                        drive_time_seconds
+                    "distance_text": (
+                        miles_to_text(
+                            estimated_road_miles
+                        )
                     ),
                     "road_factor": road_factor,
                     "average_speed_mph": (
@@ -874,13 +830,15 @@ def compute_approximate_drive_time_matrix(
                 tract_position / total_tracts
             )
 
-    result_df = pd.DataFrame(output_rows)
+    result_df = pd.DataFrame(
+        output_rows
+    )
 
     numeric_columns = [
-        "geodesic_distance_miles",
-        "total_miles",
-        "distance_meters",
         "total_traveltime",
+        "distance_meters",
+        "total_miles",
+        "geodesic_distance_miles",
     ]
 
     result_df[numeric_columns] = (
@@ -892,451 +850,380 @@ def compute_approximate_drive_time_matrix(
 
 
 # ============================================================
-# SIDEBAR SETTINGS
+# SHOW MATRIX SECTION ONLY AFTER GEOCODING EXISTS
 # ============================================================
-with st.sidebar:
-    st.header("Estimation settings")
+if "geocoded_results" in st.session_state:
 
-    road_factor = st.number_input(
-        "Road-distance factor",
-        min_value=1.0,
-        max_value=3.0,
-        value=1.25,
-        step=0.05,
-        help=(
-            "Estimated road distance equals straight-line "
-            "distance multiplied by this factor."
-        ),
+    st.divider()
+    st.header(
+        "🚗 Create Approximate Drive-Time Matrix"
     )
 
-    average_speed_mph = st.number_input(
-        "Average driving speed (mph)",
-        min_value=5.0,
-        max_value=80.0,
-        value=30.0,
-        step=1.0,
+    # Agencies created in the previous geocoding block
+    agencies_df = (
+        st.session_state["geocoded_results"]
+        .copy()
     )
 
-    filter_wake_county = st.checkbox(
-        "Keep only Wake County tracts",
-        value=True,
-        help=(
-            "Wake County's North Carolina county FIPS "
-            "code is 183."
-        ),
-    )
+    # --------------------------------------------------------
+    # Read fixed tract coordinate file
+    # --------------------------------------------------------
+    try:
+        raw_tract_df = pd.read_csv(
+            TRACT_COORDINATE_FILE,
+            dtype={"GEOID": str},
+        )
 
+    except FileNotFoundError:
+        st.error(
+            f"Could not find {TRACT_COORDINATE_FILE}. "
+            "Place it in the same folder as app.py."
+        )
+        st.stop()
 
-# ============================================================
-# FILE UPLOADS
-# ============================================================
-col1, col2 = st.columns(2)
+    except Exception as error:
+        st.error(
+            f"Could not read the tract file: {error}"
+        )
+        st.stop()
 
-with col1:
-    agency_file = st.file_uploader(
-        "Upload geocoded agency file",
-        type=["csv", "xlsx", "xls"],
-        key="agency_file",
-    )
-
-with col2:
-    tract_file = st.file_uploader(
-        "Upload tract coordinate file",
-        type=["csv", "xlsx", "xls"],
-        key="tract_file",
-    )
-
-
-if agency_file is None or tract_file is None:
-    st.info(
-        "Upload both files to configure the columns and "
-        "generate the matrix."
-    )
-    st.stop()
-
-
-# ============================================================
-# READ FILES
-# ============================================================
-try:
-    agencies_df = read_uploaded_file(
-        agency_file
-    )
-
-    raw_tracts_df = read_uploaded_file(
-        tract_file
-    )
-
-except Exception as error:
-    st.error(
-        f"Could not read the uploaded files: {error}"
-    )
-    st.stop()
-
-
-if agencies_df.empty:
-    st.error(
-        "The agency file contains no rows."
-    )
-    st.stop()
-
-if raw_tracts_df.empty:
-    st.error(
-        "The tract file contains no rows."
-    )
-    st.stop()
-
-
-# ============================================================
-# COLUMN SELECTION
-# ============================================================
-st.subheader("1. Select agency columns")
-
-agency_columns = agencies_df.columns.tolist()
-
-agency_id_index = (
-    agency_columns.index(DEFAULT_AGENCY_ID_COL)
-    if DEFAULT_AGENCY_ID_COL in agency_columns
-    else 0
-)
-
-agency_name_index = (
-    agency_columns.index(DEFAULT_AGENCY_NAME_COL)
-    if DEFAULT_AGENCY_NAME_COL in agency_columns
-    else 0
-)
-
-agency_lat_index = (
-    agency_columns.index(DEFAULT_AGENCY_LAT_COL)
-    if DEFAULT_AGENCY_LAT_COL in agency_columns
-    else 0
-)
-
-agency_lng_index = (
-    agency_columns.index(DEFAULT_AGENCY_LNG_COL)
-    if DEFAULT_AGENCY_LNG_COL in agency_columns
-    else 0
-)
-
-a1, a2, a3, a4 = st.columns(4)
-
-with a1:
-    agency_id_col = st.selectbox(
-        "Agency ID",
-        agency_columns,
-        index=agency_id_index,
-    )
-
-with a2:
-    agency_name_col = st.selectbox(
-        "Agency name",
-        agency_columns,
-        index=agency_name_index,
-    )
-
-with a3:
-    agency_lat_col = st.selectbox(
-        "Agency latitude",
-        agency_columns,
-        index=agency_lat_index,
-    )
-
-with a4:
-    agency_lng_col = st.selectbox(
-        "Agency longitude",
-        agency_columns,
-        index=agency_lng_index,
-    )
-
-
-st.subheader("2. Select tract columns")
-
-tract_columns = raw_tracts_df.columns.tolist()
-
-tract_id_index = (
-    tract_columns.index(DEFAULT_TRACT_ID_COL)
-    if DEFAULT_TRACT_ID_COL in tract_columns
-    else 0
-)
-
-tract_lat_index = (
-    tract_columns.index(DEFAULT_TRACT_LAT_COL)
-    if DEFAULT_TRACT_LAT_COL in tract_columns
-    else 0
-)
-
-tract_lng_index = (
-    tract_columns.index(DEFAULT_TRACT_LNG_COL)
-    if DEFAULT_TRACT_LNG_COL in tract_columns
-    else 0
-)
-
-t1, t2, t3 = st.columns(3)
-
-with t1:
-    tract_id_source_col = st.selectbox(
-        "Tract GEOID",
-        tract_columns,
-        index=tract_id_index,
-    )
-
-with t2:
-    tract_lat_source_col = st.selectbox(
-        "Tract latitude",
-        tract_columns,
-        index=tract_lat_index,
-    )
-
-with t3:
-    tract_lng_source_col = st.selectbox(
-        "Tract longitude",
-        tract_columns,
-        index=tract_lng_index,
-    )
-
-
-# ============================================================
-# PREPARE TRACT DATA
-# ============================================================
-tracts_df = raw_tracts_df[
-    [
-        tract_id_source_col,
-        tract_lat_source_col,
-        tract_lng_source_col,
+    required_raw_tract_columns = [
+        "GEOID",
+        "YCoord",
+        "XCoord",
     ]
-].copy()
 
-tracts_df = tracts_df.rename(
-    columns={
-        tract_id_source_col: "GEOID",
-        tract_lat_source_col: "TRACT_LAT_COL",
-        tract_lng_source_col: "TRACT_LNG_COL",
-    }
-)
+    missing_raw_columns = [
+        col
+        for col in required_raw_tract_columns
+        if col not in raw_tract_df.columns
+    ]
 
-tracts_df["GEOID"] = clean_geoid(
-    tracts_df["GEOID"]
-)
+    if missing_raw_columns:
+        st.error(
+            "The tract file is missing columns: "
+            f"{missing_raw_columns}"
+        )
+        st.stop()
 
-tracts_df = tracts_df.drop_duplicates(
-    subset=["GEOID"],
-    keep="first",
-)
+    # --------------------------------------------------------
+    # Prepare tract coordinates
+    # --------------------------------------------------------
+    tracts_df = raw_tract_df[
+        [
+            "GEOID",
+            "YCoord",
+            "XCoord",
+        ]
+    ].copy()
 
-# State FIPS = first two digits.
-tracts_df["State_FIPS"] = (
-    tracts_df["GEOID"].str[:2]
-)
+    tracts_df = tracts_df.rename(
+        columns={
+            "YCoord": "TRACT_LAT_COL",
+            "XCoord": "TRACT_LNG_COL",
+        }
+    )
 
-# County FIPS = digits 3 through 5.
-tracts_df["County"] = (
-    tracts_df["GEOID"].str[2:5]
-)
+    tracts_df["GEOID"] = clean_geoid(
+        tracts_df["GEOID"]
+    )
 
-if filter_wake_county:
+    tracts_df = tracts_df.drop_duplicates(
+        subset=["GEOID"],
+        keep="first",
+    )
+
+    tracts_df["County"] = (
+        tracts_df["GEOID"]
+        .str[2:5]
+    )
+
+    # Wake County only
     tracts_df = tracts_df[
         tracts_df["County"] == "183"
     ].copy()
 
+    # --------------------------------------------------------
+    # Validate agency column names
+    # --------------------------------------------------------
+    required_agency_columns = [
+        "Agency No.",
+        "Site Name",
+        "Latitude",
+        "Longitude",
+    ]
 
-# ============================================================
-# PREVIEW
-# ============================================================
-st.subheader("3. Input summary")
+    missing_agency_columns = [
+        col
+        for col in required_agency_columns
+        if col not in agencies_df.columns
+    ]
 
-summary1, summary2, summary3 = st.columns(3)
+    if missing_agency_columns:
+        st.error(
+            "The geocoded agency data is missing columns: "
+            f"{missing_agency_columns}"
+        )
 
-summary1.metric(
-    "Agency rows",
-    f"{len(agencies_df):,}",
-)
+        st.write(
+            "Available columns:",
+            agencies_df.columns.tolist(),
+        )
 
-summary2.metric(
-    "Unique tract rows",
-    f"{len(tracts_df):,}",
-)
+        st.stop()
 
-summary3.metric(
-    "Expected pairs",
-    f"{len(agencies_df) * len(tracts_df):,}",
-)
+    # --------------------------------------------------------
+    # Settings
+    # --------------------------------------------------------
+    setting_col1, setting_col2 = st.columns(2)
 
-with st.expander("Preview agency file"):
-    st.dataframe(
-        agencies_df.head(20),
-        use_container_width=True,
+    with setting_col1:
+        road_factor = st.number_input(
+            "Road-distance factor",
+            min_value=1.0,
+            max_value=3.0,
+            value=ROAD_FACTOR_DEFAULT,
+            step=0.05,
+            key="matrix_road_factor",
+        )
+
+    with setting_col2:
+        average_speed_mph = st.number_input(
+            "Average driving speed (mph)",
+            min_value=5.0,
+            max_value=80.0,
+            value=AVERAGE_SPEED_DEFAULT,
+            step=1.0,
+            key="matrix_average_speed",
+        )
+
+    valid_agencies = agencies_df.dropna(
+        subset=[
+            "Agency No.",
+            "Site Name",
+            "Latitude",
+            "Longitude",
+        ]
     )
 
-with st.expander("Preview prepared tract file"):
-    st.dataframe(
-        tracts_df.head(20),
-        use_container_width=True,
+    summary_col1, summary_col2, summary_col3 = (
+        st.columns(3)
     )
 
+    summary_col1.metric(
+        "Valid agencies",
+        f"{len(valid_agencies):,}",
+    )
 
-# ============================================================
-# GENERATE MATRIX
-# ============================================================
-generate_button = st.button(
-    "Generate approximate drive-time matrix",
-    type="primary",
-    use_container_width=True,
-)
+    summary_col2.metric(
+        "Wake County tracts",
+        f"{len(tracts_df):,}",
+    )
 
+    summary_col3.metric(
+        "Expected matrix rows",
+        f"{len(valid_agencies) * len(tracts_df):,}",
+    )
 
-if generate_button:
-    progress_bar = st.progress(0)
-    status_placeholder = st.empty()
-
-    try:
-        drive_time_df = (
-            compute_approximate_drive_time_matrix(
-                tracts_df=tracts_df,
-                agencies_df=agencies_df,
-                tract_id_col="GEOID",
-                tract_lat_col="TRACT_LAT_COL",
-                tract_lng_col="TRACT_LNG_COL",
-                agency_id_col=agency_id_col,
-                agency_name_col=agency_name_col,
-                agency_lat_col=agency_lat_col,
-                agency_lng_col=agency_lng_col,
-                road_factor=road_factor,
-                average_speed_mph=average_speed_mph,
-                progress_bar=progress_bar,
-                status_placeholder=status_placeholder,
-            )
+    with st.expander(
+        "Preview geocoded agency data"
+    ):
+        st.dataframe(
+            agencies_df.head(20),
+            use_container_width=True,
         )
 
-        progress_bar.empty()
-        status_placeholder.empty()
-
-        # Add agency information.
-        agency_info = agencies_df.copy()
-
-        agency_info[agency_id_col] = clean_text(
-            agency_info[agency_id_col]
+    with st.expander(
+        "Preview tract coordinate data"
+    ):
+        st.dataframe(
+            tracts_df.head(20),
+            use_container_width=True,
         )
 
-        agency_info = agency_info.drop_duplicates(
-            subset=[agency_id_col],
-            keep="first",
-        )
+    # --------------------------------------------------------
+    # Generate matrix
+    # --------------------------------------------------------
+    generate_matrix = st.button(
+        "Generate drive-time matrix",
+        type="primary",
+        use_container_width=True,
+        key="generate_matrix_button",
+    )
 
-        # Avoid duplicate agency-name column during merge.
-        agency_info = agency_info.drop(
-            columns=[agency_name_col],
-            errors="ignore",
-        )
+    if generate_matrix:
+        progress_bar = st.progress(0)
+        status_placeholder = st.empty()
 
-        drive_time_df = drive_time_df.merge(
-            agency_info,
-            left_on="Agency No.",
-            right_on=agency_id_col,
-            how="left",
-            validate="many_to_one",
-        )
-
-        if (
-            agency_id_col != "Agency No."
-            and agency_id_col in drive_time_df.columns
-        ):
-            drive_time_df = drive_time_df.drop(
-                columns=[agency_id_col]
+        try:
+            drive_time_df = (
+                compute_approximate_drive_time_matrix(
+                    tracts_df=tracts_df,
+                    agencies_df=agencies_df,
+                    road_factor=road_factor,
+                    average_speed_mph=(
+                        average_speed_mph
+                    ),
+                    progress_bar=progress_bar,
+                    status_placeholder=(
+                        status_placeholder
+                    ),
+                )
             )
 
-        # Add tract coordinates and county.
-        tract_info = tracts_df[
-            [
+            # -----------------------------------------------
+            # Merge all agency fields
+            # -----------------------------------------------
+            agency_info_df = agencies_df.copy()
+
+            agency_info_df[
+                "Agency No."
+            ] = clean_text(
+                agency_info_df["Agency No."]
+            )
+
+            agency_info_df = (
+                agency_info_df
+                .drop_duplicates(
+                    subset=["Agency No."],
+                    keep="first",
+                )
+            )
+
+            # Name is already in matrix as Agency Name
+            agency_info_df = (
+                agency_info_df
+                .drop(
+                    columns=["Site Name"],
+                    errors="ignore",
+                )
+            )
+
+            drive_time_df = (
+                drive_time_df.merge(
+                    agency_info_df,
+                    on="Agency No.",
+                    how="left",
+                    validate="many_to_one",
+                )
+            )
+
+            # -----------------------------------------------
+            # Merge tract coordinates and county
+            # -----------------------------------------------
+            tract_info_df = (
+                tracts_df[
+                    [
+                        "GEOID",
+                        "TRACT_LAT_COL",
+                        "TRACT_LNG_COL",
+                        "County",
+                    ]
+                ]
+                .drop_duplicates(
+                    subset=["GEOID"],
+                    keep="first",
+                )
+            )
+
+            drive_time_df = (
+                drive_time_df.merge(
+                    tract_info_df,
+                    on="GEOID",
+                    how="left",
+                    validate="many_to_one",
+                )
+            )
+
+            # -----------------------------------------------
+            # Column order
+            # -----------------------------------------------
+            preferred_columns = [
                 "GEOID",
+                "Agency No.",
+                "Agency Name",
+                "drive_time_seconds",
+                "total_traveltime",
+                "distance_meters",
+                "total_miles",
+                "Latitude",
+                "Longitude",
+                "Address",
+                "Operating Hours",
                 "TRACT_LAT_COL",
                 "TRACT_LNG_COL",
                 "County",
+                "drive_time_text",
+                "distance_text",
+                "geodesic_distance_miles",
+                "road_factor",
+                "average_speed_mph",
+                "status",
             ]
-        ].drop_duplicates(
-            subset=["GEOID"],
-            keep="first",
-        )
 
-        drive_time_df = drive_time_df.merge(
-            tract_info,
-            on="GEOID",
-            how="left",
-            validate="many_to_one",
-        )
+            remaining_columns = [
+                col
+                for col in drive_time_df.columns
+                if col not in preferred_columns
+            ]
 
-        # Put core fields first.
-        preferred_columns = [
-            "GEOID",
-            "Agency No.",
-            "Name",
-            "drive_time_seconds",
-            "total_traveltime",
-            "distance_meters",
-            "total_miles",
-            "drive_time_text",
-            "distance_text",
-            "TRACT_LAT_COL",
-            "TRACT_LNG_COL",
-            "County",
-        ]
+            final_columns = [
+                col
+                for col in preferred_columns
+                if col in drive_time_df.columns
+            ] + remaining_columns
 
-        remaining_columns = [
-            column
-            for column in drive_time_df.columns
-            if column not in preferred_columns
-        ]
+            drive_time_df = (
+                drive_time_df[final_columns]
+            )
 
-        final_columns = [
-            column
-            for column in preferred_columns
-            if column in drive_time_df.columns
-        ] + remaining_columns
+            st.session_state[
+                "drive_time_df"
+            ] = drive_time_df
 
-        drive_time_df = drive_time_df[
-            final_columns
-        ]
+            progress_bar.empty()
+            status_placeholder.empty()
 
-        st.session_state[
-            "drive_time_df"
-        ] = drive_time_df
+            st.success(
+                f"Generated {len(drive_time_df):,} "
+                "tract-agency records."
+            )
 
-        st.success(
-            f"Generated {len(drive_time_df):,} "
-            "tract-agency records."
-        )
+        except Exception as error:
+            progress_bar.empty()
+            status_placeholder.empty()
 
-    except Exception as error:
-        progress_bar.empty()
-        status_placeholder.empty()
-
-        st.error(
-            f"Matrix generation failed: {error}"
-        )
+            st.error(
+                f"Matrix generation failed: {error}"
+            )
 
 
 # ============================================================
-# RESULTS
+# MATRIX RESULTS AND DOWNLOAD
 # ============================================================
 if "drive_time_df" in st.session_state:
-    drive_time_df = st.session_state[
-        "drive_time_df"
-    ]
 
-    st.subheader("4. Results")
+    drive_time_df = (
+        st.session_state["drive_time_df"]
+    )
 
-    r1, r2, r3 = st.columns(3)
+    st.subheader("Drive-Time Matrix Results")
 
-    r1.metric(
+    result_col1, result_col2, result_col3 = (
+        st.columns(3)
+    )
+
+    result_col1.metric(
         "Matrix rows",
         f"{len(drive_time_df):,}",
     )
 
-    r2.metric(
+    result_col2.metric(
         "Unique GEOIDs",
         f"{drive_time_df['GEOID'].nunique():,}",
     )
 
-    r3.metric(
+    result_col3.metric(
         "Unique agencies",
         f"{drive_time_df['Agency No.'].nunique():,}",
     )
@@ -1347,13 +1234,15 @@ if "drive_time_df" in st.session_state:
         hide_index=True,
     )
 
-    csv_bytes = dataframe_to_csv_bytes(
+    csv_output = (
         drive_time_df
+        .to_csv(index=False)
+        .encode("utf-8-sig")
     )
 
     st.download_button(
         label="Download ODM_CAFN_Summer_2.csv",
-        data=csv_bytes,
+        data=csv_output,
         file_name="ODM_CAFN_Summer_2.csv",
         mime="text/csv",
         type="primary",
